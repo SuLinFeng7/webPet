@@ -1,0 +1,26 @@
+{
+  "name": "webpet",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "dev": "node scripts/build.mjs --watch",
+    "lint": "eslint .",
+    "format": "prettier . --write"
+  },
+  "engines": {
+    "node": ">=16.14.0"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.268",
+    "@types/node": "^16.18.125",
+    "esbuild": "^0.19.12",
+    "eslint": "^8.57.1",
+    "pixi-spine": "^3.1.1",
+    "pixi.js": "^6.5.10",
+    "pixi.js-legacy": "^6.5.10",
+    "prettier": "^2.8.8",
+    "typescript": "^5.4.5"
+  }
+}

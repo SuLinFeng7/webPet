@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "webPet",
+  "version": "0.1.0",
+  "description": "浏览器宠物：游荡、交互/对话、记录浏览数据（项目雏形）",
+  "action": {
+    "default_title": "webPet",
+    "default_popup": "ui/popup/index.html"
+  },
+  "options_page": "ui/options/index.html",
+  "background": {
+    "service_worker": "background/service-worker.js",
+    "type": "module"
+  },
+  "permissions": ["storage"],
+  "host_permissions": ["<all_urls>"],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content/content-script.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["assets/**/*"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}
+
