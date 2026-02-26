@@ -193,16 +193,49 @@ export async function mountPetOverlay(doc: Document): Promise<PetRuntime | null>
     hasMoved = false;
   };
 
+  const onKeyDown = (e: KeyboardEvent) => {
+    if (e.altKey || e.key === "Alt") {
+      wrapper.style.pointerEvents = "none";
+    }
+  };
+
+  const onKeyUp = (e: KeyboardEvent) => {
+    if (!e.altKey && e.key === "Alt") {
+      wrapper.style.pointerEvents = "auto";
+    }
+  };
+
+  const handleVisibilityChange = () => {
+    if (doc.hidden) {
+      console.log("[webPet] 页面隐藏，停止渲染");
+      app?.ticker.stop();
+    } else {
+      console.log("[webPet] 页面显示，恢复渲染");
+      app?.ticker.start();
+    }
+  };
+
   wrapper.addEventListener("pointerdown", onPointerDownWrapped);
   doc.addEventListener("pointermove", onPointerMoveWrapped);
   doc.addEventListener("pointerup", onPointerUpWrapped);
   doc.addEventListener("pointerdown", resetIdleTimer);
+  doc.addEventListener("keydown", onKeyDown);
+  doc.addEventListener("keyup", onKeyUp);
+  doc.addEventListener("visibilitychange", handleVisibilityChange);
+
+  // 当窗口失去焦点时恢复 pointer-events 防止卡死
+  window.addEventListener("blur", () => {
+    wrapper.style.pointerEvents = "auto";
+  });
 
   const cleanup = () => {
     wrapper.removeEventListener("pointerdown", onPointerDownWrapped);
     doc.removeEventListener("pointermove", onPointerMoveWrapped);
     doc.removeEventListener("pointerup", onPointerUpWrapped);
     doc.removeEventListener("pointerdown", resetIdleTimer);
+    doc.removeEventListener("keydown", onKeyDown);
+    doc.removeEventListener("keyup", onKeyUp);
+    doc.removeEventListener("visibilitychange", handleVisibilityChange);
     movementManager?.cleanup();
     if (app) {
       app.destroy(true, { children: true, texture: true, baseTexture: true });
