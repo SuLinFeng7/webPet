@@ -1,4 +1,4 @@
-import { getState, STORAGE_KEYS } from "@shared/storage";
+import { getState, setState, StorageState, STORAGE_KEYS } from "@shared/storage";
 import * as PIXI from "pixi.js-legacy";
 import { ROOT_ID, WRAPPER_SIZE, IDLE_TIMEOUT_MS } from "./constants";
 import { PetRuntime } from "./types";
@@ -51,8 +51,13 @@ export async function mountPetOverlay(doc: Document): Promise<PetRuntime | null>
     }, IDLE_TIMEOUT_MS);
   };
 
-  const doAction = (action: string) => {
-    actionManager?.setAction(action);
+  const doAction = (action: string, fromSync = false, forceLoop?: boolean) => {
+    if (actionManager?.getCurrentAction() !== action || forceLoop !== undefined) {
+      actionManager?.setAction(action, false, forceLoop);
+      if (!fromSync) {
+        setState({ [STORAGE_KEYS.petAction]: action }).catch(console.error);
+      }
+    }
     resetIdleTimer();
   };
 
@@ -64,6 +69,7 @@ export async function mountPetOverlay(doc: Document): Promise<PetRuntime | null>
       backgroundAlpha: 0,
       antialias: true,
       powerPreference: "low-power"
+      // removed eventMode to fix lint
     });
     console.log("[webPet] PIXI Application 创建成功，渲染器类型:", app.renderer.type === PIXI.RENDERER_TYPE.CANVAS ? "Canvas" : "WebGL");
     
@@ -75,7 +81,13 @@ export async function mountPetOverlay(doc: Document): Promise<PetRuntime | null>
     console.log("[webPet] Spine 加载成功");
     
     app.stage.addChild(spine);
-    console.log("[webPet] Spine 已添加到舞台");
+    
+    // Enable spine interactivity so we can catch clicks precisely on drawn pixels/bounds!
+    // @ts-ignore compatibility with different pixi versions
+    spine.interactive = true; 
+    // @ts-ignore
+    spine.cursor = "grab";
+    console.log("[webPet] Spine 已添加到舞台并开启互动");
     
     // 获取所有动画名称
     const allAnimations = spine.spineData.animations.map((a: { name: string }) => a.name);
@@ -113,10 +125,12 @@ export async function mountPetOverlay(doc: Document): Promise<PetRuntime | null>
   let dragging = false;
   let startX = 0;
   let startY = 0;
-  let startLeft = 24;
-  let startTop = 180;
+  let currentLeft = 24;
+  let currentTop = 180;
+  let dragStartLeft = 24;
+  let dragStartTop = 180;
 
-  function setPos(left: number, top: number) {
+  function setPos(left: number, top: number, fromSync = false) {
     const vw = doc.defaultView?.innerWidth ?? 1024;
     const vh = doc.defaultView?.innerHeight ?? 768;
     const w = WRAPPER_SIZE;
@@ -125,25 +139,118 @@ export async function mountPetOverlay(doc: Document): Promise<PetRuntime | null>
     const nextTop = clamp(top, 0, vh - h);
     wrapper.style.left = `${nextLeft}px`;
     wrapper.style.top = `${nextTop}px`;
+    currentLeft = nextLeft;
+    currentTop = nextTop;
+    
+    if (!fromSync && !dragging) {
+      // Avoid sending rapid syncs by using a simple debounce or on mouse up
+    }
   }
 
-  setPos(startLeft, startTop);
+  const initPos = st[STORAGE_KEYS.petPosition];
+  if (initPos) {
+    setPos(initPos.x, initPos.y, true);
+  } else {
+    setPos(currentLeft, currentTop, true);
+  }
+  
+  if (st[STORAGE_KEYS.petAction]) {
+    doAction(st[STORAGE_KEYS.petAction], true);
+  }
 
   let pressTimer: number | null = null;
   let longPress = false;
   let hasMoved = false;
 
+  let currentRotation = 0;
+  let targetRotation = 0;
+  let rotVelocity = 0;
+  let grabX = WRAPPER_SIZE / 2;
+  let grabY = WRAPPER_SIZE / 2;
+  let physicsRaf: number | null = null;
+  let lastMouseX = 0;
+
+  const physicsLoop = () => {
+    const spring = 0.12;
+    const damp = 0.82;
+    const force = ((dragging ? targetRotation : 0) - currentRotation) * spring;
+    rotVelocity += force;
+    rotVelocity *= damp;
+    currentRotation += rotVelocity;
+    
+    if (Math.abs(currentRotation) > 0.001 || Math.abs(rotVelocity) > 0.001) {
+      wrapper.style.transform = `translateZ(0) rotate(${currentRotation}rad)`;
+    } else {
+      currentRotation = 0;
+      wrapper.style.transform = `translateZ(0)`;
+    }
+    physicsRaf = requestAnimationFrame(physicsLoop);
+  };
+  physicsRaf = requestAnimationFrame(physicsLoop);
+
   const onPointerDownWrapped = (e: PointerEvent) => {
     if (e.button !== 0) return;
+    
+    // hitTest: check if mouse is on actual spine character pixels/bounds, not just the canvas square
+    let hit = true;
+    if (app && spine) {
+      const rect = wrapper.getBoundingClientRect();
+      const clientX = e.clientX - rect.left;
+      const clientY = e.clientY - rect.top;
+      
+      const petWidth = 75;
+      const petHeight = 110;
+      
+      // 假设小人水平居中，垂直稍微偏下（底部在 Canvas 底部，或者居中偏下）
+      const cx = WRAPPER_SIZE / 2;
+      const cy = WRAPPER_SIZE / 2 + 10;
+      
+      const isWithinWidth = Math.abs(clientX - cx) <= petWidth / 2;
+      const isWithinHeight = Math.abs(clientY - cy) <= petHeight / 2;
+      
+      if (!isWithinWidth || !isWithinHeight) {
+        hit = false;
+      }
+    }
+    
+    if (!hit) return; // ignore click if it's in the empty corners
+    
+    // 如果弹窗打开，点击小人身上任何部位都先关闭弹窗，不引起拖拽和交互
+    if (menuManager?.isVisible()) {
+      const isMenuClick = (e.target as HTMLElement | null)?.closest(".bubble");
+      if (!isMenuClick) {
+        menuManager.hide();
+        return;
+      }
+    }
+    
     longPress = false;
     hasMoved = false;
     dragging = true;
-    (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+    const target = e.target as HTMLElement | null;
+    target?.setPointerCapture?.(e.pointerId);
     startX = e.clientX;
     startY = e.clientY;
     const rect = wrapper.getBoundingClientRect();
-    startLeft = rect.left;
-    startTop = rect.top;
+    dragStartLeft = rect.left;
+    dragStartTop = rect.top;
+    
+    // Physics grab offset
+    grabX = e.clientX - rect.left;
+    grabY = e.clientY - rect.top;
+    wrapper.style.transformOrigin = `${grabX}px ${grabY}px`;
+    
+    const dx = WRAPPER_SIZE / 2 - grabX;
+    const dy = WRAPPER_SIZE / 2 - grabY;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist > 20) {
+      targetRotation = Math.PI / 2 - Math.atan2(dy, dx);
+      if (targetRotation > Math.PI) targetRotation -= Math.PI * 2;
+      if (targetRotation < -Math.PI) targetRotation += Math.PI * 2;
+    } else {
+      targetRotation = 0;
+    }
+    lastMouseX = e.clientX;
     
     if (pressTimer) window.clearTimeout(pressTimer);
     pressTimer = window.setTimeout(() => {
@@ -160,13 +267,34 @@ export async function mountPetOverlay(doc: Document): Promise<PetRuntime | null>
     const dx = Math.abs(e.clientX - startX);
     const dy = Math.abs(e.clientY - startY);
     if (dx > 5 || dy > 5) {
-      hasMoved = true;
+      if (!hasMoved) {
+        hasMoved = true;
+        // 开始拖拽时，触发保持循环的 interact 动画
+        movementManager?.stopMove();
+        doAction("interact", false, true);
+      }
       if (pressTimer) {
         window.clearTimeout(pressTimer);
         pressTimer = null;
       }
     }
-    setPos(startLeft + (e.clientX - startX), startTop + (e.clientY - startY));
+    
+    const vX = e.clientX - lastMouseX;
+    lastMouseX = e.clientX;
+    const swing = Math.max(-Math.PI / 3, Math.min(Math.PI / 3, vX * 0.015));
+    
+    const grabDx = WRAPPER_SIZE / 2 - grabX;
+    const grabDy = WRAPPER_SIZE / 2 - grabY;
+    if (Math.sqrt(grabDx * grabDx + grabDy * grabDy) > 20) {
+      let baseTarget = Math.PI / 2 - Math.atan2(grabDy, grabDx);
+      if (baseTarget > Math.PI) baseTarget -= Math.PI * 2;
+      if (baseTarget < -Math.PI) baseTarget += Math.PI * 2;
+      targetRotation = baseTarget - swing;
+    } else {
+      targetRotation = -swing;
+    }
+    
+    setPos(dragStartLeft + (e.clientX - startX), dragStartTop + (e.clientY - startY));
   };
 
   const onPointerUpWrapped = (e: PointerEvent) => {
@@ -182,11 +310,19 @@ export async function mountPetOverlay(doc: Document): Promise<PetRuntime | null>
       return;
     }
     
-    // 如果没有移动且不是长按，则触发 interact（停止移动）
+    // 如果没有移动且不是长按，则触发 单纯不循环的 interact（然后会自动转回 relax）
     if (!hasMoved && !longPress) {
       console.log("[webPet] 短按触发 interact");
       movementManager?.stopMove();
       doAction("interact");
+    }
+    
+    // 如果有移动且拖拽完成，切回 relax
+    if (hasMoved) {
+      doAction("relax");
+      setState({
+        [STORAGE_KEYS.petPosition]: { x: currentLeft, y: currentTop }
+      }).catch(console.error);
     }
     
     longPress = false;
@@ -215,7 +351,17 @@ export async function mountPetOverlay(doc: Document): Promise<PetRuntime | null>
     }
   };
 
+  const onGlobalPointerDown = (e: PointerEvent) => {
+    if (menuManager?.isVisible()) {
+      const target = e.target as HTMLElement | null;
+      if (!target?.closest('.bubble')) {
+        menuManager.hide();
+      }
+    }
+  };
+
   wrapper.addEventListener("pointerdown", onPointerDownWrapped);
+  doc.addEventListener("pointerdown", onGlobalPointerDown, { capture: true });
   doc.addEventListener("pointermove", onPointerMoveWrapped);
   doc.addEventListener("pointerup", onPointerUpWrapped);
   doc.addEventListener("pointerdown", resetIdleTimer);
@@ -229,7 +375,9 @@ export async function mountPetOverlay(doc: Document): Promise<PetRuntime | null>
   });
 
   const cleanup = () => {
+    if (physicsRaf) cancelAnimationFrame(physicsRaf);
     wrapper.removeEventListener("pointerdown", onPointerDownWrapped);
+    doc.removeEventListener("pointerdown", onGlobalPointerDown, { capture: true });
     doc.removeEventListener("pointermove", onPointerMoveWrapped);
     doc.removeEventListener("pointerup", onPointerUpWrapped);
     doc.removeEventListener("pointerdown", resetIdleTimer);
@@ -243,5 +391,23 @@ export async function mountPetOverlay(doc: Document): Promise<PetRuntime | null>
     root.remove();
   };
 
-  return { root, wrapper, cleanup };
+  const updateState = (newState: StorageState) => {
+    if (newState[STORAGE_KEYS.petAction] && actionManager?.getCurrentAction() !== newState[STORAGE_KEYS.petAction]) {
+      doAction(newState[STORAGE_KEYS.petAction], true);
+    }
+    if (newState[STORAGE_KEYS.petPosition] && !dragging) {
+      const pos = newState[STORAGE_KEYS.petPosition];
+      if (pos) {
+        const { x, y } = pos;
+        // Only set pos if the delta is significant
+        const dx = Math.abs(x - currentLeft);
+        const dy = Math.abs(y - currentTop);
+        if (dx > 10 || dy > 10) {
+          setPos(x, y, true);
+        }
+      }
+    }
+  };
+
+  return { root, wrapper, cleanup, updateState };
 }

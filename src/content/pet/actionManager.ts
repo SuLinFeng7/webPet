@@ -15,7 +15,7 @@ export class ActionManager {
     this.onActionChange = callback;
   }
 
-  setAction(name: string, skipCallback = false): boolean {
+  setAction(name: string, skipCallback = false, forceLoop?: boolean): boolean {
     if (!this.spine) return false;
     const target = name.toLowerCase();
     const allActions = this.allAnimations.map((a) => a.toLowerCase());
@@ -28,7 +28,7 @@ export class ActionManager {
     
     // 找到原始大小写的动画名称
     const originalName = this.allAnimations.find((a) => a.toLowerCase() === target) ?? target;
-    const isLoop = target !== "interact";
+    const isLoop = forceLoop !== undefined ? forceLoop : target !== "interact";
     
     console.log(`[webPet] 设置动作: ${target} (${originalName}), 循环: ${isLoop}`);
     
@@ -39,12 +39,12 @@ export class ActionManager {
     const trackEntry = this.spine.state.setAnimation(0, originalName, isLoop);
     this.currentAction = target;
     
-    // interact 动作播放完成后自动切换到 relax
-    if (target === "interact" && trackEntry) {
+    // interact 动作（或任何非循环动作）播放完成后自动切换到 relax
+    if (target === "interact" && trackEntry && !isLoop) {
       console.log("[webPet] 设置 interact complete 监听器");
       trackEntry.listener = {
         complete: () => {
-          console.log("[webPet] interact 动画自然完成（Pixi Spine Listener），切换到 relax");
+          console.log("[webPet] 动画自然完成（Pixi Spine Listener），切换到 relax");
           if (this.currentAction === "interact") {
             this.setAction("relax", true);
           }
