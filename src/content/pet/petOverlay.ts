@@ -71,31 +71,34 @@ export async function mountPetOverlay(doc: Document): Promise<PetRuntime | null>
       powerPreference: "low-power"
       // removed eventMode to fix lint
     });
-    console.log("[webPet] PIXI Application 创建成功，渲染器类型:", app.renderer.type === PIXI.RENDERER_TYPE.CANVAS ? "Canvas" : "WebGL");
-    
+    console.log(
+      "[webPet] PIXI Application 创建成功，渲染器类型:",
+      app.renderer.type === PIXI.RENDERER_TYPE.CANVAS ? "Canvas" : "WebGL"
+    );
+
     wrapper.appendChild(app.view as HTMLCanvasElement);
     console.log("[webPet] Canvas 已添加到 DOM");
-    
+
     console.log("[webPet] 开始加载 Spine 资源...");
     spine = await loadSpine(app);
     console.log("[webPet] Spine 加载成功");
-    
+
     app.stage.addChild(spine);
-    
+
     // Enable spine interactivity so we can catch clicks precisely on drawn pixels/bounds!
     // @ts-ignore compatibility with different pixi versions
-    spine.interactive = true; 
+    spine.interactive = true;
     // @ts-ignore
     spine.cursor = "grab";
     console.log("[webPet] Spine 已添加到舞台并开启互动");
-    
+
     // 获取所有动画名称
     const allAnimations = spine.spineData.animations.map((a: { name: string }) => a.name);
-    
+
     // 初始化管理器
     actionManager = new ActionManager(spine, allAnimations);
     movementManager = new MovementManager(wrapper, doc);
-    
+
     // 设置动作变化回调（统一处理移动逻辑）
     actionManager.setOnActionChange((action) => {
       console.log(`[webPet] 动作变化回调: ${action}`);
@@ -105,13 +108,26 @@ export async function mountPetOverlay(doc: Document): Promise<PetRuntime | null>
         movementManager?.stopMove();
       }
     });
-    
+
     // 菜单回调只负责设置动作，移动逻辑由 onActionChange 处理
     menuManager = new MenuManager(bubble, (action) => {
       console.log(`[webPet] 菜单选择: ${action}`);
+      if (action === "copy_text") {
+        const text = document.body.innerText;
+        navigator.clipboard
+          .writeText(text)
+          .then(() => {
+            menuManager?.showToast("已复制网页文本！");
+          })
+          .catch((err) => {
+            console.error("[webPet] 复制失败", err);
+            menuManager?.showToast("复制失败");
+          });
+        return;
+      }
       doAction(action);
     });
-    
+
     // 强制更新一次渲染
     app.renderer.render(app.stage);
     resetIdleTimer();
@@ -141,7 +157,7 @@ export async function mountPetOverlay(doc: Document): Promise<PetRuntime | null>
     wrapper.style.top = `${nextTop}px`;
     currentLeft = nextLeft;
     currentTop = nextTop;
-    
+
     if (!fromSync && !dragging) {
       // Avoid sending rapid syncs by using a simple debounce or on mouse up
     }
@@ -153,7 +169,7 @@ export async function mountPetOverlay(doc: Document): Promise<PetRuntime | null>
   } else {
     setPos(currentLeft, currentTop, true);
   }
-  
+
   if (st[STORAGE_KEYS.petAction]) {
     doAction(st[STORAGE_KEYS.petAction], true);
   }
@@ -177,7 +193,7 @@ export async function mountPetOverlay(doc: Document): Promise<PetRuntime | null>
     rotVelocity += force;
     rotVelocity *= damp;
     currentRotation += rotVelocity;
-    
+
     if (Math.abs(currentRotation) > 0.001 || Math.abs(rotVelocity) > 0.001) {
       wrapper.style.transform = `translateZ(0) rotate(${currentRotation}rad)`;
     } else {
@@ -190,31 +206,31 @@ export async function mountPetOverlay(doc: Document): Promise<PetRuntime | null>
 
   const onPointerDownWrapped = (e: PointerEvent) => {
     if (e.button !== 0) return;
-    
+
     // hitTest: check if mouse is on actual spine character pixels/bounds, not just the canvas square
     let hit = true;
     if (app && spine) {
       const rect = wrapper.getBoundingClientRect();
       const clientX = e.clientX - rect.left;
       const clientY = e.clientY - rect.top;
-      
+
       const petWidth = 75;
       const petHeight = 110;
-      
+
       // 假设小人水平居中，垂直稍微偏下（底部在 Canvas 底部，或者居中偏下）
       const cx = WRAPPER_SIZE / 2;
       const cy = WRAPPER_SIZE / 2 + 10;
-      
+
       const isWithinWidth = Math.abs(clientX - cx) <= petWidth / 2;
       const isWithinHeight = Math.abs(clientY - cy) <= petHeight / 2;
-      
+
       if (!isWithinWidth || !isWithinHeight) {
         hit = false;
       }
     }
-    
+
     if (!hit) return; // ignore click if it's in the empty corners
-    
+
     // 如果弹窗打开，点击小人身上任何部位都先关闭弹窗，不引起拖拽和交互
     if (menuManager?.isVisible()) {
       const isMenuClick = (e.target as HTMLElement | null)?.closest(".bubble");
@@ -223,7 +239,7 @@ export async function mountPetOverlay(doc: Document): Promise<PetRuntime | null>
         return;
       }
     }
-    
+
     longPress = false;
     hasMoved = false;
     dragging = true;
@@ -234,12 +250,12 @@ export async function mountPetOverlay(doc: Document): Promise<PetRuntime | null>
     const rect = wrapper.getBoundingClientRect();
     dragStartLeft = rect.left;
     dragStartTop = rect.top;
-    
+
     // Physics grab offset
     grabX = e.clientX - rect.left;
     grabY = e.clientY - rect.top;
     wrapper.style.transformOrigin = `${grabX}px ${grabY}px`;
-    
+
     const dx = WRAPPER_SIZE / 2 - grabX;
     const dy = WRAPPER_SIZE / 2 - grabY;
     const dist = Math.sqrt(dx * dx + dy * dy);
@@ -251,7 +267,7 @@ export async function mountPetOverlay(doc: Document): Promise<PetRuntime | null>
       targetRotation = 0;
     }
     lastMouseX = e.clientX;
-    
+
     if (pressTimer) window.clearTimeout(pressTimer);
     pressTimer = window.setTimeout(() => {
       if (!hasMoved) {
@@ -278,11 +294,11 @@ export async function mountPetOverlay(doc: Document): Promise<PetRuntime | null>
         pressTimer = null;
       }
     }
-    
+
     const vX = e.clientX - lastMouseX;
     lastMouseX = e.clientX;
     const swing = Math.max(-Math.PI / 3, Math.min(Math.PI / 3, vX * 0.015));
-    
+
     const grabDx = WRAPPER_SIZE / 2 - grabX;
     const grabDy = WRAPPER_SIZE / 2 - grabY;
     if (Math.sqrt(grabDx * grabDx + grabDy * grabDy) > 20) {
@@ -293,7 +309,7 @@ export async function mountPetOverlay(doc: Document): Promise<PetRuntime | null>
     } else {
       targetRotation = -swing;
     }
-    
+
     setPos(dragStartLeft + (e.clientX - startX), dragStartTop + (e.clientY - startY));
   };
 
@@ -304,19 +320,19 @@ export async function mountPetOverlay(doc: Document): Promise<PetRuntime | null>
       window.clearTimeout(pressTimer);
       pressTimer = null;
     }
-    
+
     // 如果点击了菜单，不触发 interact
     if (menuManager?.isVisible()) {
       return;
     }
-    
+
     // 如果没有移动且不是长按，则触发 单纯不循环的 interact（然后会自动转回 relax）
     if (!hasMoved && !longPress) {
       console.log("[webPet] 短按触发 interact");
       movementManager?.stopMove();
       doAction("interact");
     }
-    
+
     // 如果有移动且拖拽完成，切回 relax
     if (hasMoved) {
       doAction("relax");
@@ -324,7 +340,7 @@ export async function mountPetOverlay(doc: Document): Promise<PetRuntime | null>
         [STORAGE_KEYS.petPosition]: { x: currentLeft, y: currentTop }
       }).catch(console.error);
     }
-    
+
     longPress = false;
     hasMoved = false;
   };
@@ -354,7 +370,7 @@ export async function mountPetOverlay(doc: Document): Promise<PetRuntime | null>
   const onGlobalPointerDown = (e: PointerEvent) => {
     if (menuManager?.isVisible()) {
       const target = e.target as HTMLElement | null;
-      if (!target?.closest('.bubble')) {
+      if (!target?.closest(".bubble")) {
         menuManager.hide();
       }
     }
@@ -392,7 +408,10 @@ export async function mountPetOverlay(doc: Document): Promise<PetRuntime | null>
   };
 
   const updateState = (newState: StorageState) => {
-    if (newState[STORAGE_KEYS.petAction] && actionManager?.getCurrentAction() !== newState[STORAGE_KEYS.petAction]) {
+    if (
+      newState[STORAGE_KEYS.petAction] &&
+      actionManager?.getCurrentAction() !== newState[STORAGE_KEYS.petAction]
+    ) {
       doAction(newState[STORAGE_KEYS.petAction], true);
     }
     if (newState[STORAGE_KEYS.petPosition] && !dragging) {
